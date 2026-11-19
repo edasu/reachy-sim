@@ -1,0 +1,19 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+.DS_Store
+Adobe Premiere Pro Auto-Save/
+Adobe After Effects Auto-Save/
+*.pek
+*.cfa
+*.mxf
+*.mp4
+*.mov
