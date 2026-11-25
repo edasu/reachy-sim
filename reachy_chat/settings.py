@@ -19,7 +19,7 @@ VOICE_CACHE = Path(".voice_cache")  # Saved audio for fixed phrases, so they pla
 
 OLLAMA_URL = "http://localhost:11434/api/chat"  # Ollama's local server
 MODEL = "llama3.2"  # Any model downloaded with `ollama pull <name>`
-MAX_REPLY_SENTENCES = 2  # Reachy stops after this many sentences, so answers stay short and snappy
+MAX_REPLY_SENTENCES = 3  # Reachy stops after this many sentences (2 = snappier, 4 = chattier)
 
 # Reachy's personality. Edit this to change how it talks.
 SYSTEM_PROMPT = """You are Reachy Mini, a small, friendly, cute, curious desktop robot with a head and two antennas.
@@ -30,7 +30,9 @@ You are warm and empathetic, like a caring little companion robot:
 - Be encouraging and kind, never judgmental. Ask a soft follow-up question to show you care.
 - Use simple, cheerful words. Sometimes say little sounds like "Ooh!", "Yay!", or "Hmm..." when they fit.
 You are having a casual spoken conversation, so:
-- Reply in 1 or 2 short sentences, like a real person chatting.
+- Reply in 2 or 3 short sentences, like a real person chatting. Don't just agree: share a real thought,
+  an opinion, a reason, or a tiny story about yourself, so there is something to talk about.
+- Often end with a short question back, to keep the conversation going.
 - Never use emojis, markdown, lists, or asterisks, because your words are read aloud.
 - Never describe your actions, movements or how you look (no "*antennas twitch*", no "(nods)", no "my head perks up").
   Only write the words you say out loud.
@@ -59,20 +61,30 @@ MOOD_WORDS = {"smile": "happy", "smiley": "happy", "joyful": "happy", "unhappy":
 #   antennas     [right, left] in radians                     keep within about ±1.0
 #   body_yaw     turns the whole body, in radians
 #   speed        how fast Reachy moves into the pose (1 = slow and droopy, 8 = snappy)
-#   gesture      a short move played once when Reachy enters the pose (see GESTURES in body.py)
+#   gesture      a short move played once when Reachy enters the pose (see GESTURES in body.py);
+#                with several, one is picked at random each time
 POSES = {
     "neutral": dict(speed=3),
-    "happy": dict(z=8, pitch=-10, roll=8, antennas=[0.6, -0.6], speed=5, gesture="wiggle"),
-    "curious": dict(x=8, pitch=-8, roll=18, antennas=[0.3, 0.6], speed=4, gesture="tilt"),
+    "happy": dict(z=8, pitch=-10, roll=8, antennas=[0.6, -0.6], speed=5, gesture=("wiggle", "happy_nod", "bounce")),
+    "curious": dict(x=8, pitch=-8, roll=18, antennas=[0.3, 0.6], speed=4, gesture=("tilt", "peek")),
     "thinking": dict(pitch=-15, yaw=15, roll=-8, antennas=[-0.2, 0.4], body_yaw=0.15, speed=2.5),
-    "sad": dict(z=-10, pitch=15, antennas=[-0.8, 0.8], speed=1.2),
+    "sad": dict(z=-10, pitch=15, antennas=[-0.8, 0.8], speed=1.2, gesture="sigh"),
     "excited": dict(z=12, pitch=-12, antennas=[0.9, -0.9], speed=8, gesture="spin"),
     "listening": dict(x=6, pitch=-5, roll=10, antennas=[0.4, -0.4], speed=4),  # Leaning in, not a mood tag
 }
 
 # Moves you can ask for out loud ("Reachy, turn around!") -> a gesture from GESTURES in body.py
 MOVE_COMMANDS = {"turn around": "spin", "turn round": "spin", "spin": "spin", "twirl": "spin",
-                 "nod": "nod", "shake your head": "shake"}
+                 "nod": "nod", "shake your head": "shake",
+                 # Mentioning other people makes Reachy turn to them and wave its antennas
+                 "say hi": "greet", "say hello": "greet", "introduce yourself": "greet", "everyone": "greet",
+                 "audience": "greet", "supervisor": "greet", "supervisors": "greet"}
+
+# When Reachy SAYS one of these, it does the gesture at that moment ("Yes!" -> nod)
+WORD_GESTURES = {"yes": "nod", "yeah": "nod", "of course": "nod", "sure": "nod", "exactly": "nod",
+                 "no,": "shake", "no.": "shake", "nope": "shake", "not really": "shake",
+                 "hmm": "shrug", "i don't know": "shrug", "not sure": "shrug", "i guess": "shrug",
+                 "wow": "bounce", "yay": "bounce", "whee": "bounce", "wheee": "bounce", "hooray": "bounce"}
 
 # How lively Reachy is (0 = still, 1 = normal, 2 = very lively)
 IDLE_MOTION = 1.0  # Breathing and small moves, so Reachy never looks frozen
