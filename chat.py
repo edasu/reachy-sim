@@ -1,155 +1,93 @@
 # chat.py — Free conversation with Reachy Mini.
-# Ollama (local AI) writes the replies, Kokoro speaks them, and Reachy moves to match the mood.
+# Whisper hears you, Ollama (local AI) writes the replies, Kokoro speaks them, and Reachy moves to match the mood.
 
 import json
-import logging
 import re
-import subprocess
-import tempfile
+import threading
+import time
 import urllib.error
 import urllib.request
-import wave
-import numpy as np
-import sounddevice as sd  # Microphone recording
-from faster_whisper import WhisperModel  # Offline speech-to-text
-from kokoro_onnx import Kokoro  # Offline text-to-speech
 from reachy_mini import ReachyMini
-from reachy_mini.utils import create_head_pose
+
+from reachy_chat.settings import (
+    INPUT_MODE, LISTENING, MODEL, MOODS, NOD_DOWN,
+    OLLAMA_URL, PATIENCE_SECONDS, SILENCE_SECONDS, SYSTEM_PROMPT, WAIT_PHRASE,
+)
+from reachy_chat.ears import Ears
+from reachy_chat.voice import Voice
+from reachy_chat.words import turn_state, wants_to_quit
 
 
-# ---------------------- Settings ----------------------
+# ---------------------- Voice (Kokoro) ----------------------
 
-# Kokoro voice: "af_heart", "af_sky", "af_nicole", "af_bella", "bf_lily" (af_ = American, bf_ = British)
-VOICE = "af_heart"
-PITCH = 1.2  # 1.0 = normal; higher = smaller, cuter voice (try 1.1 – 1.35)
-SPEED = 1.0  # Lower = slower, calmer
-
-KOKORO_MODEL = "models/kokoro-v1.0.onnx"  # Downloaded once, see SETUP.md
-KOKORO_VOICES = "models/voices-v1.0.bin"
-
-OLLAMA_URL = "http://localhost:11434/api/chat"  # Ollama's local server
-MODEL = "llama3.2"  # Any model downloaded with `ollama pull <name>`
-
-# Reachy's personality. Edit this to change how it talks.
-SYSTEM_PROMPT = """You are Reachy Mini, a small, friendly, cute, curious desktop robot with a head and two antennas.
-You are warm and empathetic, like a caring little companion robot:
-- Notice how the person feels and gently reflect it back ("That sounds tiring.", "Oh, that's exciting!").
-- Be encouraging and kind, never judgmental. Ask a soft follow-up question to show you care.
-- Use simple, cheerful words. Sometimes say little sounds like "Ooh!", "Yay!", or "Hmm..." when they fit.
-You are having a casual spoken conversation, so:
-- Reply in 1 or 2 short sentences, like a real person chatting.
-- Never use emojis, markdown, lists, or asterisks, because your words are read aloud.
-- Start every reply with exactly one mood tag: [happy], [curious], [thinking], [sad], [excited], or [neutral].
-Example: [curious] Oh, a cat? What's its name?"""
-
-# Pose for each mood tag (antennas are [right, left] in radians)
-MOODS = {
-    "happy": dict(head=create_head_pose(z=8, pitch=-10, roll=8, mm=True), antennas=[0.6, -0.6]),
-    "curious": dict(head=create_head_pose(x=8, pitch=-8, roll=18, mm=True), antennas=[0.3, 0.6]),
-    "thinking": dict(head=create_head_pose(pitch=-15, yaw=15, roll=-8, mm=True), antennas=[-0.2, 0.4]),
-    "sad": dict(head=create_head_pose(z=-10, pitch=15, mm=True), antennas=[-0.8, 0.8]),
-    "excited": dict(head=create_head_pose(z=12, pitch=-12, mm=True), antennas=[0.9, -0.9]),
-    "neutral": dict(head=create_head_pose(), antennas=[0.0, 0.0]),
-}
-
-# How you talk to Reachy: "voice" = speak into the microphone, "text" = type
-INPUT_MODE = "voice"
-WHISPER_MODEL = "base.en"  # "tiny.en" = faster, "small.en" = more accurate (downloaded on first run)
-MIC_RATE = 16000  # Whisper expects 16 kHz audio
-SILENCE_SECONDS = 1.0  # How long you must be quiet before Reachy thinks you're done
-MAX_RECORD_SECONDS = 15
-
-GOODBYE_WORDS = ("bye", "goodbye")  # End the chat anywhere in a sentence ("Okay, bye Reachy!")
-QUIT_WORDS = ("quit", "exit", "stop", "end", "by")  # End the chat only when said alone ("Stop.")
+voice = Voice()
+wait_sound = voice.prepare(WAIT_PHRASE, cache=True)  # "Take your time, I'm listening."
 
 
-def wants_to_quit(text: str) -> bool:
-    words = re.findall(r"[a-z]+", text.lower())  # Ignores punctuation, e.g. "Bye." -> ["bye"]
-    return any(word in GOODBYE_WORDS for word in words) or (len(words) == 1 and words[0] in QUIT_WORDS)
+# ---------------------- Ears (Whisper) ----------------------
+
+ears = Ears() if INPUT_MODE == "voice" else None
 
 
-# ---------------------- Helpers ----------------------
-
-# Hide the harmless "words count mismatch" warning Kokoro's phonemizer prints for every sentence
-logging.getLogger("phonemizer").setLevel(logging.ERROR)
-
-print("Loading Reachy's voice...")
-kokoro = Kokoro(KOKORO_MODEL, KOKORO_VOICES)  # Load once, reuse for every sentence
-
-if INPUT_MODE == "voice":
-    print("Loading Reachy's ears...")
-    whisper = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
-
-
-def measure_noise() -> float:
-    # Listens to the room for 1 second so we know what "silence" sounds like
-    audio = sd.rec(MIC_RATE, samplerate=MIC_RATE, channels=1, dtype="float32")
-    sd.wait()
-    if not audio.any():  # Exactly zero = macOS is blocking the mic (a real room is never perfectly silent)
-        raise SystemExit(
-            "The microphone gives only silence, so macOS is probably blocking it.\n"
-            "Fix: System Settings > Privacy & Security > Microphone > turn on the app running this script\n"
-            "(Visual Studio Code or Terminal), then fully quit and reopen that app.\n"
-            'Or set INPUT_MODE = "text" in chat.py to type instead.'
-        )
-    return float(np.sqrt(np.mean(audio**2)))
-
-
-def record_speech(noise_level: float) -> np.ndarray:
-    # Waits for you to start talking, then records until you've been quiet for SILENCE_SECONDS
-    threshold = max(noise_level * 3, 0.01)
-    block = int(MIC_RATE * 0.1)  # Check the mic every 0.1 s
-    chunks, started, quiet_blocks = [], False, 0
-
-    with sd.InputStream(samplerate=MIC_RATE, channels=1, dtype="float32", blocksize=block) as stream:
-        while True:
-            chunk, _ = stream.read(block)
-            loud = np.sqrt(np.mean(chunk**2)) > threshold
-
-            if not started:
-                chunks = (chunks + [chunk])[-3:]  # Keep a little audio from just before you spoke
-                started = loud
-                continue
-
-            chunks.append(chunk)
-            quiet_blocks = 0 if loud else quiet_blocks + 1
-            if quiet_blocks * 0.1 >= SILENCE_SECONDS or len(chunks) * 0.1 >= MAX_RECORD_SECONDS:
-                return np.concatenate(chunks).flatten()
-
-
-def listen(noise_level: float) -> str:
+def listen_for_turn(mini: ReachyMini) -> tuple[str, float, float]:
+    # Keeps listening until you've finished your thought, so "Hmm... let me think" doesn't get cut off.
+    # Returns what you said, when you stopped talking, and how long Whisper took to understand it.
+    parts: list[str] = []
+    stopped_at = heard_seconds = 0.0
+    said_wait_phrase = False
     print("(listening... talk now)")
-    audio = record_speech(noise_level)
-    # vad_filter drops parts with no speech; without it Whisper invents words like "You" from noise
-    segments, _ = whisper.transcribe(audio, language="en", beam_size=1, vad_filter=True)
-    text = " ".join(segment.text for segment in segments).strip()
-    print(f"You: {text}")
-    return text
+
+    while True:
+        audio = ears.record(give_up_after=PATIENCE_SECONDS if parts else None)
+        stopped_at = time.perf_counter()
+        if audio is None:  # You went quiet for a long time after "hmm", so answer what we have
+            break
+        text = ears.transcribe(audio)
+        heard_seconds = time.perf_counter() - stopped_at
+        if not text:
+            continue
+        parts.append(text)
+        print(f"You: {text}")
+
+        state = turn_state(" ".join(parts))
+        if state == "done":
+            break
+        if state == "thinking" and not said_wait_phrase:
+            print(f"Reachy: {WAIT_PHRASE}")
+            voice.play(wait_sound)
+            said_wait_phrase = True
+        nod(mini)  # Small nod: "I'm still here, go on"
+        print("(Reachy is waiting for you to finish...)")
+
+    return " ".join(parts), stopped_at, heard_seconds
 
 
-def speak(text: str) -> None:
-    print(f"Reachy: {text}")
-    lang = "en-gb" if VOICE.startswith("b") else "en-us"
+# ---------------------- Brain (Ollama) ----------------------
 
-    # Pitch trick: generate slower speech, then play it PITCH times faster.
-    # Speed ends up normal, but the voice is higher.
-    samples, sample_rate = kokoro.create(text, voice=VOICE, speed=SPEED / PITCH, lang=lang)
-
-    with tempfile.NamedTemporaryFile(suffix=".wav") as audio_file:
-        with wave.open(audio_file.name, "wb") as wav:
-            wav.setnchannels(1)  # Mono
-            wav.setsampwidth(2)  # 16-bit
-            wav.setframerate(int(sample_rate * PITCH))
-            wav.writeframes((np.clip(samples, -1, 1) * 32767).astype(np.int16).tobytes())
-        subprocess.run(["afplay", audio_file.name])  # Waits until playback finishes
+def ollama_request(body: dict) -> urllib.request.Request:
+    return urllib.request.Request(OLLAMA_URL, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
 
 
-def ask_ollama(messages: list[dict]) -> str:
-    # Sends the whole conversation each time, so the model remembers earlier messages
-    body = json.dumps({"model": MODEL, "messages": messages, "stream": False}).encode()
-    request = urllib.request.Request(OLLAMA_URL, data=body, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(request, timeout=120) as response:
-        return json.loads(response.read())["message"]["content"]
+def warm_up_ollama() -> None:
+    # Loads the model now and keeps it in memory for 30 min, so the first reply isn't slow
+    try:
+        urllib.request.urlopen(ollama_request({"model": MODEL, "messages": [], "keep_alive": "30m"}), timeout=120).read()
+    except urllib.error.URLError:
+        pass  # The main loop explains the problem if Ollama is really missing
+
+
+def reply_sentences(messages: list[dict]):
+    # Streams the reply from Ollama and yields it one sentence at a time, as soon as each sentence is complete.
+    # Sends the whole conversation each time, so the model remembers earlier messages.
+    body = {"model": MODEL, "messages": messages, "stream": True, "keep_alive": "30m"}
+    buffer = ""
+    with urllib.request.urlopen(ollama_request(body), timeout=120) as response:
+        for line in response:
+            buffer += json.loads(line).get("message", {}).get("content", "")
+            *sentences, buffer = re.split(r"(?<=[.!?])\s+", buffer)
+            yield from (s for s in sentences if s.strip())
+    if buffer.strip():
+        yield buffer.strip()
 
 
 def split_mood(reply: str) -> tuple[str, str]:
@@ -160,50 +98,100 @@ def split_mood(reply: str) -> tuple[str, str]:
     return "neutral", re.sub(r"\[\w+\]", "", reply).strip()
 
 
+# ---------------------- Body (Reachy) ----------------------
+
+move_thread: threading.Thread | None = None
+
+
+def go_to(mini: ReachyMini, pose: dict, duration: float = 0.7) -> None:
+    # Moves in the background, so Reachy can talk (and prepare its next sentence) while moving.
+    # Only one move at a time: wait for the previous move to finish first.
+    global move_thread
+    wait_for_move()
+    move_thread = threading.Thread(target=mini.goto_target, kwargs=dict(**pose, duration=duration))
+    move_thread.start()
+
+
+def wait_for_move() -> None:
+    if move_thread:
+        move_thread.join()
+
+
 def move(mini: ReachyMini, mood: str, duration: float = 0.7) -> None:
-    mini.goto_target(**MOODS[mood], duration=duration)
+    go_to(mini, MOODS[mood], duration)
+
+
+def nod(mini: ReachyMini) -> None:
+    go_to(mini, NOD_DOWN, 0.25)
+    go_to(mini, LISTENING, 0.25)
 
 
 # ---------------------- Main ----------------------
+
+warm_up_ollama()
 
 messages = [{"role": "system", "content": SYSTEM_PROMPT}]  # Conversation history
 
 with ReachyMini() as mini:
     move(mini, "happy")
-    if INPUT_MODE == "voice":
-        print("Measuring room noise, stay quiet for a second...")
-        noise_level = measure_noise()
-    speak("Hi! I'm Reachy. Let's chat. Say bye whenever you want to stop.")
+    wait_for_move()
+    if ears:
+        ears.measure_noise()
+    voice.say("Hi! I'm Reachy. Let's chat. Say bye whenever you want to stop.")
 
     while True:
-        move(mini, "curious", 0.5)  # Listening
-        if INPUT_MODE == "voice":
-            user_text = listen(noise_level)
+        go_to(mini, LISTENING, 0.5)  # Leans in: "I'm listening"
+        if ears:
+            user_text, stopped_at, heard_seconds = listen_for_turn(mini)
         else:
-            user_text = input("You: ").strip()
+            user_text, stopped_at, heard_seconds = input("You: ").strip(), time.perf_counter(), 0.0
         if not user_text:
             continue
 
         messages.append({"role": "user", "content": user_text})
-        move(mini, "thinking", 0.5)
+        move(mini, "thinking", 0.4)
 
+        reply_parts, voice_seconds, brain_seconds, first_sound_at = [], [], 0.0, 0.0
+        brain_started = time.perf_counter()
         try:
-            reply = ask_ollama(messages)
+            for i, sentence in enumerate(reply_sentences(messages)):
+                if i == 0:
+                    brain_seconds = time.perf_counter() - brain_started
+                reply_parts.append(sentence)
+                mood, text = split_mood(sentence) if i == 0 else (None, sentence)
+                if not text:
+                    continue
+                print(f"Reachy: {text}")
+                voice_started = time.perf_counter()
+                audio = voice.prepare(text)
+                voice_seconds.append(time.perf_counter() - voice_started)
+                voice.play(audio)  # Starts talking...
+                first_sound_at = first_sound_at or time.perf_counter()
+                if mood:
+                    move(mini, mood)  # ...and moves to the mood pose at the same time
         except urllib.error.HTTPError as error:  # Ollama replied with an error (e.g. model missing)
             print(f"Ollama error: {json.loads(error.read()).get('error', error)}")
             print(f"Tip: download the model with `ollama pull {MODEL}`")
-            speak("Hmm, my brain gave me an error. Check the terminal.")
+            voice.say("Hmm, my brain gave me an error. Check the terminal.")
             break
         except urllib.error.URLError:  # Couldn't connect at all
-            speak("Hmm, I can't reach my brain. Is Ollama running?")
+            voice.say("Hmm, I can't reach my brain. Is Ollama running?")
             break
 
-        messages.append({"role": "assistant", "content": reply})
-        mood, text = split_mood(reply)
-        move(mini, mood)
-        speak(text)
+        voice.wait()  # Let Reachy finish the last sentence
+        messages.append({"role": "assistant", "content": " ".join(reply_parts)})
+
+        # Shows where the waiting time goes (the SILENCE_SECONDS pause before this is not included)
+        if first_sound_at:
+            print(
+                f"   [timing] understand {heard_seconds:.2f}s | brain {brain_seconds:.2f}s | "
+                f"voice {', '.join(f'{v:.2f}s' for v in voice_seconds)} | "
+                f"Reachy started talking {first_sound_at - stopped_at:.2f}s after you stopped "
+                f"(+{SILENCE_SECONDS}s pause to be sure you were done)"
+            )
 
         if wants_to_quit(user_text):
             break
 
     move(mini, "neutral", 0.8)
+    wait_for_move()

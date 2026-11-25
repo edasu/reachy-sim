@@ -21,3 +21,4 @@ Adobe After Effects Auto-Save/
 # Kokoro voice model files (too big for git; see SETUP.md)
 models/
 
+.voice_cache/
