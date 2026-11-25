@@ -1,6 +1,6 @@
 # Setup Guide
 
-How to set up this project from scratch on a Mac, so Reachy Mini can move in the simulator, think with a local AI (Ollama), and talk with a natural voice (Kokoro).
+How to set up this project from scratch on a Mac, so Reachy Mini can move in the simulator, think with a local AI (Ollama), hear you through the microphone (Whisper), and talk with a natural voice (Kokoro).
 
 Everything runs **on your own computer**. No account, API key, or internet connection is needed after setup.
 
@@ -12,16 +12,18 @@ Everything runs **on your own computer**. No account, API key, or internet conne
 |---|---|---|
 | Body | Reachy Mini daemon + MuJoCo simulator | Moves the robot's head, antennas and body |
 | Brain | Ollama + `llama3.2` | Writes Reachy's replies |
+| Ears | Whisper (`faster-whisper`) + microphone | Turns what you say into text |
 | Voice | Kokoro (`kokoro-onnx`) | Turns Reachy's replies into speech |
-| Conductor | `chat.py` | Connects the three parts above |
+| Conductor | `chat.py` | Connects the four parts above |
 
 ---
 
 ## Requirements
 
 - macOS (the scripts use the built-in `afplay` and `say` commands)
+- A microphone (the Mac's built-in one is fine)
 - [Homebrew](https://brew.sh)
-- About **3 GB** of free disk space (≈2 GB for the AI model, ≈340 MB for the voice)
+- About **3 GB** of free disk space (≈2 GB for the AI model, ≈340 MB for the voice, ≈150 MB for the ears)
 
 ---
 
@@ -119,6 +121,27 @@ Cute/warm voices to try: `af_heart`, `af_bella`, `af_nicole`, `af_sky`, `bf_lily
 
 > British voices (`bf_...`) automatically use British pronunciation.
 
+### Talk with your voice (Whisper)
+
+Reachy hears you through your microphone. Your speech is turned into text on your computer by `faster-whisper`, which step 2 installs, so nothing is sent online.
+
+- Download the Whisper model (`base.en`, about 150 MB) once, so it works offline afterwards:
+
+  ```bash
+  .venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('base.en')"
+  ```
+
+  (If you skip this, `chat.py` downloads it on its first run.)
+- The first time, macOS asks whether your terminal or VS Code may use the microphone. Click **Allow**. If you clicked "Don't Allow", turn it on in **System Settings → Privacy & Security → Microphone**.
+
+Settings at the top of `chat.py`:
+
+```python
+INPUT_MODE = "voice"       # "voice" = speak, "text" = type
+WHISPER_MODEL = "base.en"  # "tiny.en" = faster, "small.en" = more accurate
+SILENCE_SECONDS = 1.0      # How long you stay quiet before Reachy answers
+```
+
 ## 5. Start the simulator
 
 Open a **separate terminal window** and keep it running:
@@ -139,9 +162,11 @@ In your main terminal:
 .venv/bin/python chat.py
 ```
 
-1. It prints `Loading Reachy's voice...` (takes a few seconds).
-2. Reachy says hi and moves.
-3. Type messages to chat. Type **bye** to stop.
+1. It prints `Loading Reachy's voice...` and `Loading Reachy's ears...` (takes a few seconds).
+2. Stay quiet while it prints `Measuring room noise...`.
+3. Reachy says hi and moves.
+4. When you see `(listening... talk now)`, speak. Reachy answers once you stop talking. Say **bye** to stop (or just "stop" on its own).
+   (With `INPUT_MODE = "text"`, type instead.)
 
 ---
 
@@ -151,7 +176,7 @@ In your main terminal:
 |---|---|
 | `hello.py` | Says "Hello! How are you?" with simple head and antenna moves (Mac `say` voice) |
 | `talk.py` | A short scripted conversation (Mac `say` voice) |
-| `chat.py` | Free AI conversation with Ollama + Kokoro voice + mood-based moves |
+| `chat.py` | Free spoken AI conversation: Whisper ears + Ollama brain + Kokoro voice + mood-based moves |
 | `movement.md` | Reference for head poses, antennas and ready-made expressions |
 
 ---
@@ -166,4 +191,7 @@ In your main terminal:
 | Script can't connect to the robot | Simulator isn't running | Do step 5 in a separate terminal first |
 | `ModuleNotFoundError: reachy_mini` / `kokoro_onnx` | Using the system Python instead of the project's | Run with `.venv/bin/python` (or `uv run python`) |
 | Long pause before Reachy answers | The AI model is generating | Normal for the first message; a smaller model is faster |
+| Reachy never reacts when you talk, or `You:` is empty | No microphone permission, or you're too quiet | Allow the mic in System Settings → Privacy & Security → Microphone, and speak a little closer |
+| Reachy answers before you finish | Pauses longer than `SILENCE_SECONDS` | Raise `SILENCE_SECONDS` to 1.5 |
+| Reachy keeps "hearing" noise | Noisy room | Run the noise check in silence, or use `INPUT_MODE = "text"` |
 | A few warning messages when the voice loads | Normal Kokoro/phonemizer messages | Safe to ignore |

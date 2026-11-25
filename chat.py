@@ -2,6 +2,7 @@
 # Ollama (local AI) writes the replies, Kokoro speaks them, and Reachy moves to match the mood.
 
 import json
+import logging
 import re
 import subprocess
 import tempfile
@@ -9,6 +10,8 @@ import urllib.error
 import urllib.request
 import wave
 import numpy as np
+import sounddevice as sd  # Microphone recording
+from faster_whisper import WhisperModel  # Offline speech-to-text
 from kokoro_onnx import Kokoro  # Offline text-to-speech
 from reachy_mini import ReachyMini
 from reachy_mini.utils import create_head_pose
@@ -49,13 +52,79 @@ MOODS = {
     "neutral": dict(head=create_head_pose(), antennas=[0.0, 0.0]),
 }
 
-QUIT_WORDS = ("bye", "goodbye", "quit", "exit", "stop", "end", "by")
+# How you talk to Reachy: "voice" = speak into the microphone, "text" = type
+INPUT_MODE = "voice"
+WHISPER_MODEL = "base.en"  # "tiny.en" = faster, "small.en" = more accurate (downloaded on first run)
+MIC_RATE = 16000  # Whisper expects 16 kHz audio
+SILENCE_SECONDS = 1.0  # How long you must be quiet before Reachy thinks you're done
+MAX_RECORD_SECONDS = 15
+
+GOODBYE_WORDS = ("bye", "goodbye")  # End the chat anywhere in a sentence ("Okay, bye Reachy!")
+QUIT_WORDS = ("quit", "exit", "stop", "end", "by")  # End the chat only when said alone ("Stop.")
+
+
+def wants_to_quit(text: str) -> bool:
+    words = re.findall(r"[a-z]+", text.lower())  # Ignores punctuation, e.g. "Bye." -> ["bye"]
+    return any(word in GOODBYE_WORDS for word in words) or (len(words) == 1 and words[0] in QUIT_WORDS)
 
 
 # ---------------------- Helpers ----------------------
 
+# Hide the harmless "words count mismatch" warning Kokoro's phonemizer prints for every sentence
+logging.getLogger("phonemizer").setLevel(logging.ERROR)
+
 print("Loading Reachy's voice...")
 kokoro = Kokoro(KOKORO_MODEL, KOKORO_VOICES)  # Load once, reuse for every sentence
+
+if INPUT_MODE == "voice":
+    print("Loading Reachy's ears...")
+    whisper = WhisperModel(WHISPER_MODEL, device="cpu", compute_type="int8")
+
+
+def measure_noise() -> float:
+    # Listens to the room for 1 second so we know what "silence" sounds like
+    audio = sd.rec(MIC_RATE, samplerate=MIC_RATE, channels=1, dtype="float32")
+    sd.wait()
+    if not audio.any():  # Exactly zero = macOS is blocking the mic (a real room is never perfectly silent)
+        raise SystemExit(
+            "The microphone gives only silence, so macOS is probably blocking it.\n"
+            "Fix: System Settings > Privacy & Security > Microphone > turn on the app running this script\n"
+            "(Visual Studio Code or Terminal), then fully quit and reopen that app.\n"
+            'Or set INPUT_MODE = "text" in chat.py to type instead.'
+        )
+    return float(np.sqrt(np.mean(audio**2)))
+
+
+def record_speech(noise_level: float) -> np.ndarray:
+    # Waits for you to start talking, then records until you've been quiet for SILENCE_SECONDS
+    threshold = max(noise_level * 3, 0.01)
+    block = int(MIC_RATE * 0.1)  # Check the mic every 0.1 s
+    chunks, started, quiet_blocks = [], False, 0
+
+    with sd.InputStream(samplerate=MIC_RATE, channels=1, dtype="float32", blocksize=block) as stream:
+        while True:
+            chunk, _ = stream.read(block)
+            loud = np.sqrt(np.mean(chunk**2)) > threshold
+
+            if not started:
+                chunks = (chunks + [chunk])[-3:]  # Keep a little audio from just before you spoke
+                started = loud
+                continue
+
+            chunks.append(chunk)
+            quiet_blocks = 0 if loud else quiet_blocks + 1
+            if quiet_blocks * 0.1 >= SILENCE_SECONDS or len(chunks) * 0.1 >= MAX_RECORD_SECONDS:
+                return np.concatenate(chunks).flatten()
+
+
+def listen(noise_level: float) -> str:
+    print("(listening... talk now)")
+    audio = record_speech(noise_level)
+    # vad_filter drops parts with no speech; without it Whisper invents words like "You" from noise
+    segments, _ = whisper.transcribe(audio, language="en", beam_size=1, vad_filter=True)
+    text = " ".join(segment.text for segment in segments).strip()
+    print(f"You: {text}")
+    return text
 
 
 def speak(text: str) -> None:
@@ -101,11 +170,17 @@ messages = [{"role": "system", "content": SYSTEM_PROMPT}]  # Conversation histor
 
 with ReachyMini() as mini:
     move(mini, "happy")
+    if INPUT_MODE == "voice":
+        print("Measuring room noise, stay quiet for a second...")
+        noise_level = measure_noise()
     speak("Hi! I'm Reachy. Let's chat. Say bye whenever you want to stop.")
 
     while True:
         move(mini, "curious", 0.5)  # Listening
-        user_text = input("You: ").strip()
+        if INPUT_MODE == "voice":
+            user_text = listen(noise_level)
+        else:
+            user_text = input("You: ").strip()
         if not user_text:
             continue
 
@@ -128,7 +203,7 @@ with ReachyMini() as mini:
         move(mini, mood)
         speak(text)
 
-        if any(word in user_text.lower().split() for word in QUIT_WORDS):
+        if wants_to_quit(user_text):
             break
 
     move(mini, "neutral", 0.8)

@@ -5,8 +5,10 @@ description = "Talk with Reachy robot"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "faster-whisper>=1.2.1",
     "kokoro-onnx>=0.6.1",
     "reachy-mini[mujoco]>=1.14.0",
+    "sounddevice>=0.5.6",
 ]
 
 [project.scripts]
