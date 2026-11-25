@@ -14,13 +14,33 @@ Everything runs **on your own computer**. No account, API key, or internet conne
 | Brain | Ollama + `llama3.2` | Writes Reachy's replies |
 | Ears | Whisper (`faster-whisper`) + microphone | Turns what you say into text |
 | Voice | Kokoro (`kokoro-onnx`) | Turns Reachy's replies into speech |
-| Conductor | `chat.py` | Connects the four parts above |
+| Conductor | `chat.py` + `reachy_chat/` | Connects the four parts above |
+
+---
+
+## Project layout
+
+```
+reachy-sim/
+├── chat.py              ← start here: the conversation, step by step
+├── reachy_chat/         ← the parts chat.py uses
+│   ├── settings.py      ← everything you might want to change (voice, personality, poses, timings)
+│   ├── words.py         ← understanding what you said: "bye"? "hmm"? unfinished sentence?
+│   ├── voice.py         ← Voice class: turns text into speech (Kokoro) and plays it
+│   └── ears.py          ← Ears class: records the microphone and turns speech into text (Whisper)
+├── models/              ← Kokoro voice files (downloaded in step 4, not in git)
+├── .voice_cache/        ← saved audio for fixed phrases (made automatically, not in git)
+├── hello.py, talk.py    ← simple older demos
+└── movement.md          ← reference for head poses and expressions
+```
+
+The brain (Ollama) and body (robot moves) code is still inside `chat.py`.
 
 ---
 
 ## Requirements
 
-- macOS (the scripts use the built-in `afplay` and `say` commands)
+- macOS (`hello.py` and `talk.py` use the built-in `say` command, and the voice test uses `afplay`)
 - A microphone (the Mac's built-in one is fine)
 - [Homebrew](https://brew.sh)
 - About **3 GB** of free disk space (≈2 GB for the AI model, ≈340 MB for the voice, ≈150 MB for the ears)
@@ -46,6 +66,8 @@ uv sync
 This reads `pyproject.toml` and installs everything into a `.venv` folder, including:
 - `reachy-mini[mujoco]`: the robot library and simulator
 - `kokoro-onnx`: the voice engine
+- `faster-whisper`: speech-to-text (Reachy's ears)
+- `sounddevice`: records the microphone and plays Reachy's voice
 
 ## 3. Set up the brain (Ollama)
 
@@ -63,7 +85,9 @@ Check it worked:
 ollama list   # should show llama3.2
 ```
 
-> You can use a different model (e.g. `qwen2.5`, `gemma3`). Pull it with `ollama pull <name>` and change `MODEL` in `chat.py`.
+> You can use a different model (e.g. `qwen2.5`, `gemma3`). Pull it with `ollama pull <name>` and change `MODEL` in `reachy_chat/settings.py`.
+>
+> Reachy's personality is `SYSTEM_PROMPT` in the same file.
 
 ## 4. Set up the voice (Kokoro)
 
@@ -104,7 +128,7 @@ You should hear "Hi! I am Reachy."
 
 ### Change the voice
 
-At the top of `chat.py`:
+In `reachy_chat/settings.py`:
 
 ```python
 VOICE = "af_heart"  # Which voice
@@ -120,6 +144,8 @@ Cute/warm voices to try: `af_heart`, `af_bella`, `af_nicole`, `af_sky`, `bf_lily
 ```
 
 > British voices (`bf_...`) automatically use British pronunciation.
+>
+> After changing the voice, the saved phrases in `.voice_cache/` are made again automatically.
 
 ### Talk with your voice (Whisper)
 
@@ -134,13 +160,28 @@ Reachy hears you through your microphone. Your speech is turned into text on you
   (If you skip this, `chat.py` downloads it on its first run.)
 - The first time, macOS asks whether your terminal or VS Code may use the microphone. Click **Allow**. If you clicked "Don't Allow", turn it on in **System Settings → Privacy & Security → Microphone**.
 
-Settings at the top of `chat.py`:
+- Whisper runs on the Mac's GPU when it can (about 0.2 s per sentence), and falls back to the CPU otherwise.
+
+Settings in `reachy_chat/settings.py`:
 
 ```python
 INPUT_MODE = "voice"       # "voice" = speak, "text" = type
 WHISPER_MODEL = "base.en"  # "tiny.en" = faster, "small.en" = more accurate
-SILENCE_SECONDS = 1.0      # How long you stay quiet before Reachy answers
+SILENCE_SECONDS = 0.8      # How long you stay quiet before Reachy answers
+PATIENCE_SECONDS = 8       # After "hmm" / "let me think", how long Reachy waits before answering anyway
 ```
+
+### Reachy waits while you think
+
+Reachy doesn't answer if you're clearly not finished:
+
+| You say | Reachy |
+|---|---|
+| "Hmm.", "Um...", "Wait.", "Let me think." | Says *"Take your time, I'm listening."*, nods, keeps listening |
+| "…pizza and", "Because", "So I was thinking about..." | Nods and keeps listening |
+| A finished sentence, or anything ending in "?" or "!" | Answers right away |
+
+If you stay quiet for `PATIENCE_SECONDS` after a "hmm", Reachy answers what you said so far. The word lists (`THINKING_PHRASES`, `FILLERS`, `UNFINISHED_ENDINGS`) are in `reachy_chat/settings.py`.
 
 ## 5. Start the simulator
 
@@ -156,17 +197,30 @@ On macOS, the 3D simulator window needs `mjpython` (MuJoCo's Python launcher) in
 
 ## 6. Run Reachy
 
-In your main terminal:
+In your main terminal, **from the project folder** (so `chat.py` can find `reachy_chat/` and `models/`):
 
 ```bash
 .venv/bin/python chat.py
 ```
 
-1. It prints `Loading Reachy's voice...` and `Loading Reachy's ears...` (takes a few seconds).
+1. It prints `Loading Reachy's voice...` and `Loading Reachy's ears...`. The very first start takes about 30 s while it warms up and saves phrases to `.voice_cache/`; later starts are faster.
 2. Stay quiet while it prints `Measuring room noise...`.
 3. Reachy says hi and moves.
-4. When you see `(listening... talk now)`, speak. Reachy answers once you stop talking. Say **bye** to stop (or just "stop" on its own).
+4. When you see `(listening... talk now)`, speak. Reachy answers about a second after you stop talking, and moves to match the mood while it talks. Say **bye** to stop (or just "stop" on its own).
    (With `INPUT_MODE = "text"`, type instead.)
+
+After each answer, a timing line shows where the waiting time went:
+
+```
+[timing] understand 0.16s | brain 0.18s | voice 0.47s | Reachy started talking 0.81s after you stopped (+0.8s pause to be sure you were done)
+```
+
+| Part | Meaning |
+|---|---|
+| understand | Whisper turning your speech into text |
+| brain | Ollama writing the first sentence |
+| voice | Kokoro making each sentence, in order |
+| started talking | The total delay you notice (after the `SILENCE_SECONDS` pause) |
 
 ---
 
@@ -176,7 +230,7 @@ In your main terminal:
 |---|---|
 | `hello.py` | Says "Hello! How are you?" with simple head and antenna moves (Mac `say` voice) |
 | `talk.py` | A short scripted conversation (Mac `say` voice) |
-| `chat.py` | Free spoken AI conversation: Whisper ears + Ollama brain + Kokoro voice + mood-based moves |
+| `chat.py` | Free spoken AI conversation: Whisper ears + Ollama brain + Kokoro voice + mood-based moves (uses `reachy_chat/`) |
 | `movement.md` | Reference for head poses, antennas and ready-made expressions |
 
 ---
@@ -190,8 +244,11 @@ In your main terminal:
 | `No such file ... kokoro-v1.0.onnx` | Voice files missing, or script run from another folder | Do step 4, and run scripts from the project folder |
 | Script can't connect to the robot | Simulator isn't running | Do step 5 in a separate terminal first |
 | `ModuleNotFoundError: reachy_mini` / `kokoro_onnx` | Using the system Python instead of the project's | Run with `.venv/bin/python` (or `uv run python`) |
-| Long pause before Reachy answers | The AI model is generating | Normal for the first message; a smaller model is faster |
-| Reachy never reacts when you talk, or `You:` is empty | No microphone permission, or you're too quiet | Allow the mic in System Settings → Privacy & Security → Microphone, and speak a little closer |
-| Reachy answers before you finish | Pauses longer than `SILENCE_SECONDS` | Raise `SILENCE_SECONDS` to 1.5 |
+| `ModuleNotFoundError: reachy_chat` | Script run from another folder | `cd` into the project folder first |
+| "The microphone gives only silence, so macOS is probably blocking it." | No microphone permission | System Settings → Privacy & Security → Microphone → turn on VS Code (or Terminal), then fully quit and reopen it |
+| Reachy is slow to answer | Look at the `[timing]` line to see which part is slow | **voice** slow: the simulator window uses a lot of CPU, so try `--headless`. **understand** slow: try `WHISPER_MODEL = "tiny.en"`. **brain** slow: try a smaller Ollama model |
+| Reachy never reacts when you talk, or `You:` is empty | You're too quiet, or the room was loud during the noise check | Speak a little closer, and restart in a quiet moment |
+| Reachy answers before you finish | You pause longer than `SILENCE_SECONDS` | Raise `SILENCE_SECONDS` to 1.2 |
+| Reachy waits a long time before answering | Your sentence ended like an unfinished one ("…and", "hmm") | Finish the sentence, or lower `PATIENCE_SECONDS` |
 | Reachy keeps "hearing" noise | Noisy room | Run the noise check in silence, or use `INPUT_MODE = "text"` |
-| A few warning messages when the voice loads | Normal Kokoro/phonemizer messages | Safe to ignore |
+| Warning messages when the voice or ears load | Normal library messages | Safe to ignore |
