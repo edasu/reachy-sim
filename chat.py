@@ -15,7 +15,7 @@ from reachy_chat.settings import (
 from reachy_chat.body import Body
 from reachy_chat.ears import Ears
 from reachy_chat.voice import Voice
-from reachy_chat.words import turn_state, wants_to_quit
+from reachy_chat.words import asked_for_mood, turn_state, wants_to_quit
 
 
 # ---------------------- Voice (Kokoro) ----------------------
@@ -84,10 +84,23 @@ def reply_sentences(messages: list[dict]):
     with urllib.request.urlopen(ollama_request(body), timeout=120) as response:
         for line in response:
             buffer += json.loads(line).get("message", {}).get("content", "")
-            *sentences, buffer = re.split(r"(?<=[.!?])\s+", buffer)
-            yield from (s for s in sentences if s.strip())
-    if buffer.strip():
+            buffer = re.sub(r"\*[^*]*\*", " ", buffer)  # Drop finished *stage directions*
+            # An unfinished *stage direction... may still be coming: only split the text before it
+            star = buffer.find("*")
+            ready, held = (buffer, "") if star < 0 else (buffer[:star], buffer[star:])
+            *sentences, rest = re.split(r"(?<=[.!?])\s+", ready)
+            buffer = rest + held
+            yield from (s for s in sentences if clean_for_speech(s))
+    buffer = buffer.split("*")[0]  # A *stage direction that never closed: drop it
+    if clean_for_speech(buffer):
         yield buffer.strip()
+
+
+def clean_for_speech(text: str) -> str:
+    # Removes things that shouldn't be read aloud: *actions*, (actions), stray * and extra spaces.
+    # Keeps a leading [mood] tag, which split_mood() reads.
+    text = re.sub(r"\*[^*]*\*|\([^)]*\)|\*", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def split_mood(reply: str) -> tuple[str, str]:
@@ -130,7 +143,12 @@ with ReachyMini() as mini, Body(mini, voice) as body:
                     brain_seconds = time.perf_counter() - brain_started
                 reply_parts.append(sentence)
                 mood, text = split_mood(sentence) if i == 0 else (None, sentence)
-                if not text:
+                if mood == "neutral" and asked_for_mood(user_text):  # "Show me a happy face" but the AI forgot the tag
+                    mood = asked_for_mood(user_text)
+                text = clean_for_speech(re.sub(r"\[\w+\]", " ", text))  # No actions or stray [tags] out loud
+                if not text:  # Nothing to say (e.g. only "[sad] *droops*"), but still show the mood
+                    if mood:
+                        body.set_pose(mood)
                     continue
                 print(f"Reachy: {text}")
                 voice_started = time.perf_counter()

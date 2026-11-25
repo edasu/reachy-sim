@@ -17,6 +17,18 @@ def wants_to_quit(text: str) -> bool:
     return said_goodbye or said_only_stop
 
 
+def asked_for_mood(text: str) -> str | None:
+    # "Show me a sad face" -> "sad". Lets Reachy show the face even if the AI forgets the mood tag.
+    words = words_of(text)
+    if not any(word in ("show", "make", "face", "look", "do") for word in words):
+        return None
+    for word in words:
+        mood = settings.MOOD_WORDS.get(word, word)
+        if mood in settings.MOOD_NAMES and mood != "neutral":
+            return mood
+    return None
+
+
 def turn_state(text: str) -> str:
     # "thinking"   = you asked for time ("Hmm.", "Let me think.")
     # "unfinished" = you stopped in the middle of a sentence ("...pizza and")
