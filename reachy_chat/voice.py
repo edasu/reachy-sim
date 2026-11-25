@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+import time
 
 import numpy as np
 import sounddevice as sd
@@ -17,6 +18,18 @@ logging.getLogger("phonemizer").setLevel(logging.ERROR)
 WARM_UP_SENTENCE = ("Hi! I'm Reachy, a little robot, and I really love chatting with people about their day, "
                     "their hobbies, their pets, and all the fun things they are curious about.")
 
+FRAME_SECONDS = 0.04  # Loudness is measured every 40 ms of speech
+
+
+def loudness_curve(audio: np.ndarray) -> np.ndarray:
+    # One number per 40 ms of speech: how loud that moment is, from 0 to 1
+    frame = int(24000 * FRAME_SECONDS)  # Samples per frame (Kokoro audio is 24 kHz before the pitch trick)
+    frames = audio[: len(audio) // frame * frame].reshape(-1, frame)
+    if not len(frames):
+        return np.zeros(0)
+    level = np.sqrt((frames**2).mean(axis=1))
+    return level / (level.max() + 1e-6)
+
 
 class Voice:
     def __init__(self):
@@ -24,6 +37,7 @@ class Voice:
         self.kokoro = Kokoro(settings.KOKORO_MODEL, settings.KOKORO_VOICES)  # Load once, reuse for every sentence
         self.play_rate = int(24000 * settings.PITCH)  # Kokoro makes 24 kHz audio; playing it faster raises the pitch
         self.lang = "en-gb" if settings.VOICE.startswith("b") else "en-us"
+        self._loudness = (0.0, np.zeros(0))  # (when the current sound started, its loudness curve)
         self.prepare(WARM_UP_SENTENCE)
 
     def prepare(self, text: str, cache: bool = False) -> np.ndarray:
@@ -45,7 +59,14 @@ class Voice:
         # Waits for the previous sound to end, then starts this one WITHOUT waiting for it,
         # so the program can prepare the next sentence or move the robot while Reachy talks.
         self.wait()
+        self._loudness = (time.perf_counter(), loudness_curve(audio))  # Lets Body move along with the voice
         sd.play(audio, self.play_rate)
+
+    def loudness(self) -> float:
+        # How loud Reachy is talking right now: 0 = silent, 1 = loudest part of the sentence
+        started, curve = self._loudness
+        frame = int((time.perf_counter() - started) * settings.PITCH / FRAME_SECONDS)  # Audio plays PITCH times faster
+        return float(curve[frame]) if 0 <= frame < len(curve) else 0.0
 
     def wait(self) -> None:
         # Waits until Reachy has finished talking

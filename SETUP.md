@@ -27,14 +27,15 @@ reachy-sim/
 │   ├── settings.py      ← everything you might want to change (voice, personality, poses, timings)
 │   ├── words.py         ← understanding what you said: "bye"? "hmm"? unfinished sentence?
 │   ├── voice.py         ← Voice class: turns text into speech (Kokoro) and plays it
-│   └── ears.py          ← Ears class: records the microphone and turns speech into text (Whisper)
+│   ├── ears.py          ← Ears class: records the microphone and turns speech into text (Whisper)
+│   └── body.py          ← Body class: keeps Reachy moving (poses, breathing, talking moves, gestures)
 ├── models/              ← Kokoro voice files (downloaded in step 4, not in git)
 ├── .voice_cache/        ← saved audio for fixed phrases (made automatically, not in git)
 ├── hello.py, talk.py    ← simple older demos
 └── movement.md          ← reference for head poses and expressions
 ```
 
-The brain (Ollama) and body (robot moves) code is still inside `chat.py`.
+The brain (Ollama) code is still inside `chat.py`.
 
 ---
 
@@ -182,6 +183,27 @@ Reachy doesn't answer if you're clearly not finished:
 | A finished sentence, or anything ending in "?" or "!" | Answers right away |
 
 If you stay quiet for `PATIENCE_SECONDS` after a "hmm", Reachy answers what you said so far. The word lists (`THINKING_PHRASES`, `FILLERS`, `UNFINISHED_ENDINGS`) are in `reachy_chat/settings.py`.
+
+### How Reachy moves
+
+Reachy never stands still. 50 times a second, `body.py` adds up four layers:
+
+| Layer | What you see |
+|---|---|
+| Pose | Reachy glides into the mood's pose (`POSES` in `settings.py`): sad droops slowly, excited snaps fast |
+| Idle | Slow breathing, plus a small move per mood: thinking looks around, curious tilts, happy's antennas dance |
+| Talking | Head bobs, antenna flicks and a little body sway that follow how loud Reachy's voice is |
+| Gesture | A short move when a mood starts (happy wiggles its antennas, excited bounces, curious tilts both ways), and a nod while it waits for you |
+
+Settings in `reachy_chat/settings.py`:
+
+```python
+IDLE_MOTION = 1.0   # 0 = still, 1 = normal, 2 = very lively
+TALK_MOTION = 1.0   # How much Reachy moves along with its voice
+POSES = {...}       # Each mood's pose, speed and gesture
+```
+
+To make a new gesture, add it to `GESTURES` in `reachy_chat/body.py` and use it with `body.gesture("name")`, or set it as a pose's `gesture`.
 
 ## 5. Start the simulator
 

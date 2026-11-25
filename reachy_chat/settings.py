@@ -1,7 +1,6 @@
 # settings.py — Everything you might want to change, in one place.
 
 from pathlib import Path
-from reachy_mini.utils import create_head_pose
 
 
 # ---------------------- Voice (Kokoro) ----------------------
@@ -36,18 +35,29 @@ Example: [curious] Oh, a cat? What's its name?"""
 
 # ---------------------- Body (Reachy) ----------------------
 
-# Pose for each mood tag (antennas are [right, left] in radians)
-MOODS = {
-    "happy": dict(head=create_head_pose(z=8, pitch=-10, roll=8, mm=True), antennas=[0.6, -0.6]),
-    "curious": dict(head=create_head_pose(x=8, pitch=-8, roll=18, mm=True), antennas=[0.3, 0.6]),
-    "thinking": dict(head=create_head_pose(pitch=-15, yaw=15, roll=-8, mm=True), antennas=[-0.2, 0.4]),
-    "sad": dict(head=create_head_pose(z=-10, pitch=15, mm=True), antennas=[-0.8, 0.8]),
-    "excited": dict(head=create_head_pose(z=12, pitch=-12, mm=True), antennas=[0.9, -0.9]),
-    "neutral": dict(head=create_head_pose(), antennas=[0.0, 0.0]),
+# The moods the AI can choose with its [mood] tag
+MOOD_NAMES = ("happy", "curious", "thinking", "sad", "excited", "neutral")
+
+# Where Reachy goes for each mood (see movement.md for what each number does):
+#   x, y, z      head slide in mm (forward, left, up)        keep within about ±20
+#   roll, pitch, yaw   head angles in degrees (tilt, nod down, turn left)   keep within about ±30
+#   antennas     [right, left] in radians                     keep within about ±1.0
+#   body_yaw     turns the whole body, in radians
+#   speed        how fast Reachy moves into the pose (1 = slow and droopy, 8 = snappy)
+#   gesture      a short move played once when Reachy enters the pose (see GESTURES in body.py)
+POSES = {
+    "neutral": dict(speed=3),
+    "happy": dict(z=8, pitch=-10, roll=8, antennas=[0.6, -0.6], speed=5, gesture="wiggle"),
+    "curious": dict(x=8, pitch=-8, roll=18, antennas=[0.3, 0.6], speed=4, gesture="tilt"),
+    "thinking": dict(pitch=-15, yaw=15, roll=-8, antennas=[-0.2, 0.4], body_yaw=0.15, speed=2.5),
+    "sad": dict(z=-10, pitch=15, antennas=[-0.8, 0.8], speed=1.2),
+    "excited": dict(z=12, pitch=-12, antennas=[0.9, -0.9], speed=8, gesture="bounce"),
+    "listening": dict(x=6, pitch=-5, roll=10, antennas=[0.4, -0.4], speed=4),  # Leaning in, not a mood tag
 }
-# Extra poses used while Reachy listens (not mood tags)
-LISTENING = dict(head=create_head_pose(x=6, pitch=-5, roll=10, mm=True), antennas=[0.4, -0.4])  # Leaning in
-NOD_DOWN = dict(head=create_head_pose(x=6, pitch=8, roll=10, mm=True), antennas=[0.5, -0.5])  # Half of a nod
+
+# How lively Reachy is (0 = still, 1 = normal, 2 = very lively)
+IDLE_MOTION = 1.0  # Breathing and small moves, so Reachy never looks frozen
+TALK_MOTION = 1.0  # Head bobs and antenna flicks that follow Reachy's voice
 
 
 # ---------------------- Ears (Whisper + microphone) ----------------------
