@@ -17,3 +17,7 @@ Adobe After Effects Auto-Save/
 *.mxf
 *.mp4
 *.mov
+
+# Kokoro voice model files (too big for git; see SETUP.md)
+models/
+
