@@ -205,6 +205,15 @@ POSES = {...}       # Each mood's pose, speed and gesture
 
 To make a new gesture, add it to `GESTURES` in `reachy_chat/body.py` and use it with `body.gesture("name")`, or set it as a pose's `gesture`.
 
+Reachy's body also follows the conversation:
+
+| When | Reachy |
+|---|---|
+| You're talking | Small nods and head tilts now and then, like "mm-hm" |
+| Reachy says "yes", "no", "hmm / I don't know", "wow / yay" | Nods, shakes its head, shrugs or hops at that moment (`WORD_GESTURES` in `settings.py`) |
+| You mention other people ("these are my supervisors", "say hi to everyone") | Turns its body to them, waves its antennas, turns back |
+| A mood starts | One of a few gestures for that mood, picked at random so it doesn't look repeated |
+
 You can also ask for moves out loud: **"turn around"** / **"spin"** (Reachy turns its body about 145° each way and comes back, with little hops), **"nod"** and **"shake your head"**. Reachy also spins when it gets excited. The phrases are `MOVE_COMMANDS` in `settings.py`. The head always turns along with the body.
 
 ## 5. Start the simulator

@@ -7,6 +7,7 @@
 #   4. Gesture   a short one-off move like a nod or a bounce
 
 import math
+import random
 import threading
 import time
 
@@ -41,6 +42,21 @@ GESTURES = {
     "tilt": (1.2, lambda u: dict(roll=14 * wave(u, 1) * (1 - u))),  # Curious tilt one way, then the other
     "shake": (0.8, lambda u: dict(yaw=15 * wave(u, 0.5) * (1 - u))),  # "No no"
     # Turns the whole body around to the left, then to the right, then back, with happy hops and antennas
+    # Answers that match Reachy's words (see WORD_GESTURES in settings.py)
+    "happy_nod": (0.8, lambda u: dict(pitch=8 * abs(math.sin(2 * math.pi * u)),  # Nod with antennas up
+                                      right=0.4 * math.sin(math.pi * u), left=-0.4 * math.sin(math.pi * u))),
+    "shrug": (1.4, lambda u: dict(roll=12 * math.sin(math.pi * u),  # "I don't know": tilt, antennas uneven
+                                  right=0.5 * math.sin(math.pi * u), left=0.5 * math.sin(math.pi * u))),
+    "sigh": (1.8, lambda u: dict(z=-5 * math.sin(math.pi * u), pitch=8 * math.sin(math.pi * u),  # Slow droop and back
+                                 right=-0.3 * math.sin(math.pi * u), left=0.3 * math.sin(math.pi * u))),
+    "peek": (1.4, lambda u: dict(x=5 * math.sin(math.pi * u), yaw=14 * wave(u, 1) * (1 - u))),  # Curious look around
+    # While you talk: small "mm-hm" moves
+    "listen_nod": (0.5, lambda u: dict(pitch=5 * math.sin(math.pi * u), right=0.15 * math.sin(2 * math.pi * u))),
+    "listen_tilt": (0.9, lambda u: dict(roll=6 * math.sin(math.pi * u), left=-0.15 * math.sin(2 * math.pi * u))),
+    # Turns to the audience (e.g. your supervisors), waves its antennas, then turns back to you
+    "greet": (3.5, lambda u: dict(body_yaw=0.9 * math.sin(math.pi * ease(u)), pitch=-6 * math.sin(math.pi * u),
+                                  right=0.5 * wave(u, 0.15) * math.sin(math.pi * u),
+                                  left=-0.5 * wave(u, 0.15) * math.sin(math.pi * u))),
     "spin": (5.0, lambda u: dict(body_yaw=2.5 * math.sin(2 * math.pi * ease(u)),
                                  z=5 * abs(math.sin(8 * math.pi * u)) * (1 - u),
                                  right=0.4 * wave(u, 0.1), left=-0.4 * wave(u, 0.1))),
@@ -89,6 +105,8 @@ class Body:
         self.gesture_name, self.gesture_started = None, 0.0
         self.talk_level = 0.0
         self.running = False
+        self.ears = None  # Set by chat.py, so Reachy can nod while you talk
+        self.next_listen_move = 0.0
 
     def __enter__(self) -> "Body":
         self.mini.goto_target(head=create_head_pose(), antennas=[0.0, 0.0], duration=1.0)  # Start from neutral
@@ -106,18 +124,29 @@ class Body:
     # ---------- What chat.py uses ----------
 
     def set_pose(self, name: str) -> None:
-        # Starts moving smoothly to a pose from settings.POSES, and plays its gesture (if it has one)
+        # Starts moving smoothly to a pose from settings.POSES, and plays its gesture (if it has one).
+        # A pose can list several gestures: one is picked at random, so Reachy doesn't look repetitive.
         self.pose_name = name
         gesture = settings.POSES[name].get("gesture")
+        if isinstance(gesture, tuple):
+            gesture = random.choice(gesture)
         if gesture:
             self.gesture(gesture)
 
     def gesture(self, name: str) -> None:
         # Plays a short move from GESTURES on top of the current pose.
-        # A gesture that is still playing (like a spin) is never cut off by a new one.
-        if self.gesture_name and time.perf_counter() - self.gesture_started < GESTURES[self.gesture_name][0]:
-            return
+        # A long gesture that is still playing (a spin, a greeting) is never cut off by a new one.
+        if self.gesture_name:
+            seconds = GESTURES[self.gesture_name][0]
+            if seconds >= 2 and time.perf_counter() - self.gesture_started < seconds:
+                return
         self.gesture_name, self.gesture_started = name, time.perf_counter()
+
+    def gesture_after(self, name: str, seconds: float) -> None:
+        # Plays a gesture a bit later, e.g. a nod exactly when Reachy says "yes"
+        timer = threading.Timer(seconds, self.gesture, args=[name])
+        timer.daemon = True
+        timer.start()
 
     # ---------- The animation loop ----------
 
@@ -146,6 +175,11 @@ class Body:
                 (idle_motion(self.pose_name, t), settings.IDLE_MOTION),
                 (talking_motion(self.talk_level, t), settings.TALK_MOTION),
             ]
+
+            # While you talk, Reachy gives small nods and tilts now and then, like "mm-hm, go on"
+            if self.pose_name == "listening" and self.ears and self.ears.hearing_you and now >= self.next_listen_move:
+                self.gesture(random.choice(("listen_nod", "listen_tilt")))
+                self.next_listen_move = now + random.uniform(1.5, 3.0)
 
             # 4. Gesture
             if self.gesture_name:

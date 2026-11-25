@@ -16,7 +16,7 @@ from reachy_chat.settings import (
 from reachy_chat.body import Body
 from reachy_chat.ears import Ears
 from reachy_chat.voice import Voice
-from reachy_chat.words import asked_for_mood, asked_for_move, turn_state, wants_to_quit
+from reachy_chat.words import asked_for_mood, asked_for_move, turn_state, wants_to_quit, word_gesture
 
 
 # ---------------------- Voice (Kokoro) ----------------------
@@ -132,6 +132,7 @@ warm_up_ollama()
 messages = [{"role": "system", "content": SYSTEM_PROMPT}]  # Conversation history
 
 with ReachyMini() as mini, Body(mini, voice) as body:
+    body.ears = ears  # Lets Reachy nod along while you talk
     body.set_pose("happy")
     if ears:
         ears.measure_noise()
@@ -181,6 +182,9 @@ with ReachyMini() as mini, Body(mini, voice) as body:
                 first_sound_at = first_sound_at or time.perf_counter()
                 if mood:
                     body.set_pose(mood)  # ...and moves to the mood pose at the same time
+                if word_gesture(text):  # "Yes!" -> nod, timed to when the word is spoken
+                    gesture, where = word_gesture(text)
+                    body.gesture_after(gesture, where * len(audio) / voice.play_rate)
         except urllib.error.HTTPError as error:  # Ollama replied with an error (e.g. model missing)
             print(f"Ollama error: {json.loads(error.read()).get('error', error)}")
             print(f"Tip: download the model with `ollama pull {MODEL}`")

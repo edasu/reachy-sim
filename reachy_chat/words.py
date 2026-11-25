@@ -38,6 +38,21 @@ def asked_for_move(text: str) -> str | None:
     return None
 
 
+def word_gesture(text: str) -> tuple[str, float] | None:
+    # "Oh yes, I love that!" -> ("nod", 0.15): the gesture for the first matching word,
+    # and how far into the sentence it is (0 = start, 1 = end), so it can be timed with the voice
+    lower = text.lower().replace("\u2019", "'")
+    found = []
+    for phrase, gesture in settings.WORD_GESTURES.items():
+        match = re.search(r"(?<![a-z'])" + re.escape(phrase) + r"(?![a-z])", lower)
+        if match:
+            found.append((match.start(), gesture))
+    if not found:
+        return None
+    start, gesture = min(found)
+    return gesture, start / max(len(lower), 1)
+
+
 def turn_state(text: str) -> str:
     # "thinking"   = you asked for time ("Hmm.", "Let me think.")
     # "unfinished" = you stopped in the middle of a sentence ("...pizza and")

@@ -19,6 +19,7 @@ class Ears:
             self.whisper = WhisperModel(settings.WHISPER_MODEL, device="cpu", compute_type="int8")
         self.transcribe(np.zeros(RATE, dtype=np.float32))  # Warm-up, so the first real answer is fast
         self.noise_level = 0.0
+        self.hearing_you = False  # True while you're talking (Body uses it to nod along)
 
     def measure_noise(self) -> None:
         # Listens to the room for 1 second so we know what "silence" sounds like
@@ -57,9 +58,11 @@ class Ears:
 
                 chunks.append(chunk)
                 quiet_blocks = 0 if loud else quiet_blocks + 1
+                self.hearing_you = quiet_blocks < 5  # Talked in the last half second
                 done_talking = quiet_blocks * BLOCK_SECONDS >= settings.SILENCE_SECONDS
                 too_long = len(chunks) * BLOCK_SECONDS >= settings.MAX_RECORD_SECONDS
                 if done_talking or too_long:
+                    self.hearing_you = False
                     return np.concatenate(chunks).flatten()
 
     def transcribe(self, audio: np.ndarray) -> str:
