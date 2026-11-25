@@ -91,6 +91,19 @@ def talking_motion(level: float, t: float) -> dict:
     )
 
 
+def check_gesture_names() -> None:
+    # A typo in a gesture name in settings.py would crash the animation loop and freeze Reachy,
+    # so we check every name once at startup and explain what's wrong.
+    used = {f"POSES[{name!r}]": pose.get("gesture") for name, pose in settings.POSES.items()}
+    used |= {f"MOVE_COMMANDS[{phrase!r}]": g for phrase, g in settings.MOVE_COMMANDS.items()}
+    used |= {f"WORD_GESTURES[{phrase!r}]": g for phrase, g in settings.WORD_GESTURES.items()}
+    for where, gestures in used.items():
+        for gesture in gestures if isinstance(gestures, tuple) else (gestures,):
+            if gesture is not None and gesture not in GESTURES:
+                raise SystemExit(f"settings.py: {where} uses gesture {gesture!r}, which doesn't exist.\n"
+                                 f"Known gestures: {', '.join(GESTURES)}")
+
+
 class Body:
     # Use it with `with`: it starts moving at the start and goes back to rest at the end.
     #   with Body(mini, voice) as body:
@@ -98,6 +111,7 @@ class Body:
     #       body.gesture("nod")
 
     def __init__(self, mini: ReachyMini, voice: Voice):
+        check_gesture_names()
         self.mini = mini
         self.voice = voice
         self.current = {part: 0.0 for part in PARTS}  # Where the pose layer is right now
@@ -136,6 +150,9 @@ class Body:
     def gesture(self, name: str) -> None:
         # Plays a short move from GESTURES on top of the current pose.
         # A long gesture that is still playing (a spin, a greeting) is never cut off by a new one.
+        if name not in GESTURES:  # Unknown name: skip it instead of crashing the animation loop
+            print(f"(unknown gesture: {name})")
+            return
         if self.gesture_name:
             seconds = GESTURES[self.gesture_name][0]
             if seconds >= 2 and time.perf_counter() - self.gesture_started < seconds:

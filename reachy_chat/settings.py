@@ -53,7 +53,7 @@ MOOD_NAMES = ("happy", "curious", "thinking", "sad", "excited", "neutral")
 
 # Other words for the moods, so "show me a smiley face" also works (see asked_for_mood in words.py)
 MOOD_WORDS = {"smile": "happy", "smiley": "happy", "joyful": "happy", "unhappy": "sad", "crying": "sad",
-              "upset": "sad", "surprised": "excited", "thoughtful": "thinking", "think": "thinking"}
+              "upset": "sad", "surprised": "excited", "thoughtful": "thinking"}
 
 # Where Reachy goes for each mood (see movement.md for what each number does):
 #   x, y, z      head slide in mm (forward, left, up)        keep within about ±20
@@ -76,9 +76,11 @@ POSES = {
 # Moves you can ask for out loud ("Reachy, turn around!") -> a gesture from GESTURES in body.py
 MOVE_COMMANDS = {"turn around": "spin", "turn round": "spin", "spin": "spin", "twirl": "spin",
                  "nod": "nod", "shake your head": "shake",
-                 # Mentioning other people makes Reachy turn to them and wave its antennas
-                 "say hi": "greet", "say hello": "greet", "introduce yourself": "greet", "everyone": "greet",
-                 "audience": "greet", "supervisor": "greet", "supervisors": "greet"}
+                 # Introducing other people makes Reachy turn to them and wave its antennas
+                 "say hi": "greet", "say hello": "greet", "introduce yourself": "greet",
+                 "hi everyone": "greet", "hello everyone": "greet", "everyone watching": "greet",
+                 "people watching": "greet", "these are my supervisors": "greet",
+                 "this is my supervisor": "greet", "meet my supervisors": "greet", "meet my supervisor": "greet"}
 
 # When Reachy SAYS one of these, it does the gesture at that moment ("Yes!" -> nod)
 WORD_GESTURES = {"yes": "nod", "yeah": "nod", "of course": "nod", "sure": "nod", "exactly": "nod",

@@ -1,7 +1,8 @@
-import random  
-import subprocess 
+import random
+import re
+import subprocess
 import time
-from reachy_mini import ReachyMini  
+from reachy_mini import ReachyMini
 from reachy_mini.utils import create_head_pose
 
 VOICE = "Stephanie (Enhanced)"  # macOS voice name (must be downloaded; check with `say -v "?"`)
@@ -19,7 +20,7 @@ with ReachyMini() as mini:
     # Friendly greeting with a small head tilt
     mini.goto_target(
         head=create_head_pose(pitch=-10, yaw=10, roll=8, degrees=True),  # Head angles in degrees
-        antennas=[0.5, -0.4],  # [left, right] antenna angles in radians
+        antennas=[0.5, -0.4],  # [right, left] antenna angles in radians
         duration=0.7,  # Time (in seconds) for this smooth movement
     )
     # `random.choice` picks one greeting from the list, so it's not the same every time
@@ -40,8 +41,10 @@ with ReachyMini() as mini:
         antennas=[-0.4, 0.4],
         duration=0.7,
     )
-    # `any(...)` is True if at least one greeting word (English or Turkish) appears in your text
-    if any(word in user_greeting for word in ("hi", "hey", "hello", "merhaba", "selam")):
+    # Splits your text into whole words, so "hi" doesn't match inside "this" or "nothing"
+    greeting_words = re.findall(r"\w+", user_greeting)
+    # `any(...)` is True if at least one greeting word (English or Turkish) is in your text
+    if any(word in greeting_words for word in ("hi", "hey", "hello", "merhaba", "selam")):
         speak("Hey! ... How's your day going?")  # "..." makes the voice pause briefly
     else:
         speak("Gotcha. ... How are you doing today?")
