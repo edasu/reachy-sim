@@ -3,16 +3,16 @@
 
 import json
 import re
-import threading
 import time
 import urllib.error
 import urllib.request
 from reachy_mini import ReachyMini
 
 from reachy_chat.settings import (
-    INPUT_MODE, LISTENING, MODEL, MOODS, NOD_DOWN,
+    INPUT_MODE, MODEL, MOOD_NAMES,
     OLLAMA_URL, PATIENCE_SECONDS, SILENCE_SECONDS, SYSTEM_PROMPT, WAIT_PHRASE,
 )
+from reachy_chat.body import Body
 from reachy_chat.ears import Ears
 from reachy_chat.voice import Voice
 from reachy_chat.words import turn_state, wants_to_quit
@@ -29,7 +29,7 @@ wait_sound = voice.prepare(WAIT_PHRASE, cache=True)  # "Take your time, I'm list
 ears = Ears() if INPUT_MODE == "voice" else None
 
 
-def listen_for_turn(mini: ReachyMini) -> tuple[str, float, float]:
+def listen_for_turn(body: Body) -> tuple[str, float, float]:
     # Keeps listening until you've finished your thought, so "Hmm... let me think" doesn't get cut off.
     # Returns what you said, when you stopped talking, and how long Whisper took to understand it.
     parts: list[str] = []
@@ -56,7 +56,7 @@ def listen_for_turn(mini: ReachyMini) -> tuple[str, float, float]:
             print(f"Reachy: {WAIT_PHRASE}")
             voice.play(wait_sound)
             said_wait_phrase = True
-        nod(mini)  # Small nod: "I'm still here, go on"
+        body.gesture("nod")  # Small nod: "I'm still here, go on"
         print("(Reachy is waiting for you to finish...)")
 
     return " ".join(parts), stopped_at, heard_seconds
@@ -93,37 +93,9 @@ def reply_sentences(messages: list[dict]):
 def split_mood(reply: str) -> tuple[str, str]:
     # "[happy] Hi there!" -> ("happy", "Hi there!"); unknown or missing tag -> "neutral"
     match = re.match(r"\s*\[(\w+)\]\s*", reply)
-    if match and match.group(1).lower() in MOODS:
+    if match and match.group(1).lower() in MOOD_NAMES:
         return match.group(1).lower(), reply[match.end():].strip()
     return "neutral", re.sub(r"\[\w+\]", "", reply).strip()
-
-
-# ---------------------- Body (Reachy) ----------------------
-
-move_thread: threading.Thread | None = None
-
-
-def go_to(mini: ReachyMini, pose: dict, duration: float = 0.7) -> None:
-    # Moves in the background, so Reachy can talk (and prepare its next sentence) while moving.
-    # Only one move at a time: wait for the previous move to finish first.
-    global move_thread
-    wait_for_move()
-    move_thread = threading.Thread(target=mini.goto_target, kwargs=dict(**pose, duration=duration))
-    move_thread.start()
-
-
-def wait_for_move() -> None:
-    if move_thread:
-        move_thread.join()
-
-
-def move(mini: ReachyMini, mood: str, duration: float = 0.7) -> None:
-    go_to(mini, MOODS[mood], duration)
-
-
-def nod(mini: ReachyMini) -> None:
-    go_to(mini, NOD_DOWN, 0.25)
-    go_to(mini, LISTENING, 0.25)
 
 
 # ---------------------- Main ----------------------
@@ -132,24 +104,23 @@ warm_up_ollama()
 
 messages = [{"role": "system", "content": SYSTEM_PROMPT}]  # Conversation history
 
-with ReachyMini() as mini:
-    move(mini, "happy")
-    wait_for_move()
+with ReachyMini() as mini, Body(mini, voice) as body:
+    body.set_pose("happy")
     if ears:
         ears.measure_noise()
     voice.say("Hi! I'm Reachy. Let's chat. Say bye whenever you want to stop.")
 
     while True:
-        go_to(mini, LISTENING, 0.5)  # Leans in: "I'm listening"
+        body.set_pose("listening")  # Leans in: "I'm listening"
         if ears:
-            user_text, stopped_at, heard_seconds = listen_for_turn(mini)
+            user_text, stopped_at, heard_seconds = listen_for_turn(body)
         else:
             user_text, stopped_at, heard_seconds = input("You: ").strip(), time.perf_counter(), 0.0
         if not user_text:
             continue
 
         messages.append({"role": "user", "content": user_text})
-        move(mini, "thinking", 0.4)
+        body.set_pose("thinking")
 
         reply_parts, voice_seconds, brain_seconds, first_sound_at = [], [], 0.0, 0.0
         brain_started = time.perf_counter()
@@ -168,7 +139,7 @@ with ReachyMini() as mini:
                 voice.play(audio)  # Starts talking...
                 first_sound_at = first_sound_at or time.perf_counter()
                 if mood:
-                    move(mini, mood)  # ...and moves to the mood pose at the same time
+                    body.set_pose(mood)  # ...and moves to the mood pose at the same time
         except urllib.error.HTTPError as error:  # Ollama replied with an error (e.g. model missing)
             print(f"Ollama error: {json.loads(error.read()).get('error', error)}")
             print(f"Tip: download the model with `ollama pull {MODEL}`")
@@ -193,5 +164,4 @@ with ReachyMini() as mini:
         if wants_to_quit(user_text):
             break
 
-    move(mini, "neutral", 0.8)
-    wait_for_move()
+    # Leaving the `with` block makes Body go back to neutral and stop
