@@ -2,6 +2,7 @@
 # Whisper hears you, Ollama (local AI) writes the replies, Kokoro speaks them, and Reachy moves to match the mood.
 
 import json
+import random
 import re
 import time
 import urllib.error
@@ -9,13 +10,13 @@ import urllib.request
 from reachy_mini import ReachyMini
 
 from reachy_chat.settings import (
-    INPUT_MODE, MODEL, MOOD_NAMES,
+    GREETINGS, INPUT_MODE, MAX_REPLY_SENTENCES, MODEL, MOOD_NAMES,
     OLLAMA_URL, PATIENCE_SECONDS, SILENCE_SECONDS, SYSTEM_PROMPT, WAIT_PHRASE,
 )
 from reachy_chat.body import Body
 from reachy_chat.ears import Ears
 from reachy_chat.voice import Voice
-from reachy_chat.words import asked_for_mood, turn_state, wants_to_quit
+from reachy_chat.words import asked_for_mood, asked_for_move, turn_state, wants_to_quit
 
 
 # ---------------------- Voice (Kokoro) ----------------------
@@ -88,7 +89,8 @@ def reply_sentences(messages: list[dict]):
             # An unfinished *stage direction... may still be coming: only split the text before it
             star = buffer.find("*")
             ready, held = (buffer, "") if star < 0 else (buffer[:star], buffer[star:])
-            *sentences, rest = re.split(r"(?<=[.!?])\s+", ready)
+            # Split after . ! or ? but not after "..." ("Hmm... let me see" is one sentence)
+            *sentences, rest = re.split(r"(?<!\.\.)(?<=[.!?])\s+", ready)
             buffer = rest + held
             yield from (s for s in sentences if clean_for_speech(s))
     buffer = buffer.split("*")[0]  # A *stage direction that never closed: drop it
@@ -108,11 +110,23 @@ def split_mood(reply: str) -> tuple[str, str]:
     match = re.match(r"\s*\[(\w+)\]\s*", reply)
     if match and match.group(1).lower() in MOOD_NAMES:
         return match.group(1).lower(), reply[match.end():].strip()
-    return "neutral", re.sub(r"\[\w+\]", "", reply).strip()
+    return "neutral", re.sub(r"\[[^\]]*\]", "", reply).strip()  # Drops made-up tags like [turning around]
 
 
 # ---------------------- Main ----------------------
 
+def warn_if_heavy_simulator() -> None:
+    # The normal simulator also films a virtual camera, which takes ~3 CPU cores and makes Reachy's voice slow and crackly
+    try:
+        status = json.loads(urllib.request.urlopen("http://localhost:8000/api/daemon/status", timeout=2).read())
+    except (urllib.error.URLError, ValueError, OSError):
+        return  # Simulator not running: ReachyMini() explains that below
+    if status.get("simulation_enabled") and not status.get("no_media"):
+        print("\n⚠️  The heavy simulator is running, so Reachy will be slow and crackly.")
+        print("   Close it (Ctrl+C) and start the light one instead:  .venv/bin/mjpython sim.py\n")
+
+
+warn_if_heavy_simulator()
 warm_up_ollama()
 
 messages = [{"role": "system", "content": SYSTEM_PROMPT}]  # Conversation history
@@ -121,7 +135,10 @@ with ReachyMini() as mini, Body(mini, voice) as body:
     body.set_pose("happy")
     if ears:
         ears.measure_noise()
-    voice.say("Hi! I'm Reachy. Let's chat. Say bye whenever you want to stop.")
+    greeting = random.choice(GREETINGS)
+    voice.say(greeting)
+    print("(Say bye whenever you want to stop.)")
+    messages.append({"role": "assistant", "content": f"[happy] {greeting}"})  # So the AI knows it asked how you are
 
     while True:
         body.set_pose("listening")  # Leans in: "I'm listening"
@@ -134,18 +151,24 @@ with ReachyMini() as mini, Body(mini, voice) as body:
 
         messages.append({"role": "user", "content": user_text})
         body.set_pose("thinking")
+        if asked_for_move(user_text):  # "Turn around!": start moving right away, while the AI writes its reply
+            body.gesture(asked_for_move(user_text))
 
         reply_parts, voice_seconds, brain_seconds, first_sound_at = [], [], 0.0, 0.0
         brain_started = time.perf_counter()
         try:
             for i, sentence in enumerate(reply_sentences(messages)):
+                if i >= MAX_REPLY_SENTENCES:  # Long enough: stop here (this also tells Ollama to stop writing)
+                    break
                 if i == 0:
                     brain_seconds = time.perf_counter() - brain_started
                 reply_parts.append(sentence)
                 mood, text = split_mood(sentence) if i == 0 else (None, sentence)
                 if mood == "neutral" and asked_for_mood(user_text):  # "Show me a happy face" but the AI forgot the tag
                     mood = asked_for_mood(user_text)
-                text = clean_for_speech(re.sub(r"\[\w+\]", " ", text))  # No actions or stray [tags] out loud
+                if mood == "neutral" and asked_for_move(user_text):  # "Turn around!" deserves a happy face
+                    mood = "happy"
+                text = clean_for_speech(re.sub(r"\[[^\]]*\]", " ", text))  # No actions or stray [tags] out loud
                 if not text:  # Nothing to say (e.g. only "[sad] *droops*"), but still show the mood
                     if mood:
                         body.set_pose(mood)

@@ -19,10 +19,12 @@ VOICE_CACHE = Path(".voice_cache")  # Saved audio for fixed phrases, so they pla
 
 OLLAMA_URL = "http://localhost:11434/api/chat"  # Ollama's local server
 MODEL = "llama3.2"  # Any model downloaded with `ollama pull <name>`
+MAX_REPLY_SENTENCES = 2  # Reachy stops after this many sentences, so answers stay short and snappy
 
 # Reachy's personality. Edit this to change how it talks.
 SYSTEM_PROMPT = """You are Reachy Mini, a small, friendly, cute, curious desktop robot with a head and two antennas.
 Your body is only a round head with two antennas on a small base that can turn. You have no arms, no mouth or face screen, and no lights.
+You cannot see anything right now, so never describe things around you. If someone asks what you see, say your eyes aren't switched on yet.
 You are warm and empathetic, like a caring little companion robot:
 - Notice how the person feels and gently reflect it back ("That sounds tiring.", "Oh, that's exciting!").
 - Be encouraging and kind, never judgmental. Ask a soft follow-up question to show you care.
@@ -35,8 +37,11 @@ You are having a casual spoken conversation, so:
 - Start every reply with exactly one mood tag: [happy], [curious], [thinking], [sad], [excited], or [neutral].
   Your robot body shows the mood by itself, so if someone asks you to show a feeling or make a face,
   just use that mood tag and say a short line.
+- Your body can turn around, nod and shake its head. If someone asks you to, your body does it by itself,
+  so never say you can't: just say a short, cheerful line.
 Example: [curious] Oh, a cat? What's its name?
-Example: (asked to show a sad face) [sad] Aww, this is my sad face."""
+Example: (asked to show a sad face) [sad] Aww, this is my sad face.
+Example: (asked to turn around) [excited] Wheee, here I go!"""
 
 
 # ---------------------- Body (Reachy) ----------------------
@@ -61,9 +66,13 @@ POSES = {
     "curious": dict(x=8, pitch=-8, roll=18, antennas=[0.3, 0.6], speed=4, gesture="tilt"),
     "thinking": dict(pitch=-15, yaw=15, roll=-8, antennas=[-0.2, 0.4], body_yaw=0.15, speed=2.5),
     "sad": dict(z=-10, pitch=15, antennas=[-0.8, 0.8], speed=1.2),
-    "excited": dict(z=12, pitch=-12, antennas=[0.9, -0.9], speed=8, gesture="bounce"),
+    "excited": dict(z=12, pitch=-12, antennas=[0.9, -0.9], speed=8, gesture="spin"),
     "listening": dict(x=6, pitch=-5, roll=10, antennas=[0.4, -0.4], speed=4),  # Leaning in, not a mood tag
 }
+
+# Moves you can ask for out loud ("Reachy, turn around!") -> a gesture from GESTURES in body.py
+MOVE_COMMANDS = {"turn around": "spin", "turn round": "spin", "spin": "spin", "twirl": "spin",
+                 "nod": "nod", "shake your head": "shake"}
 
 # How lively Reachy is (0 = still, 1 = normal, 2 = very lively)
 IDLE_MOTION = 1.0  # Breathing and small moves, so Reachy never looks frozen
@@ -84,6 +93,14 @@ MAX_RECORD_SECONDS = 15
 # ---------------------- Words ----------------------
 
 WAIT_PHRASE = "Take your time, I'm listening."
+
+# Reachy says one of these at the start (picked at random). Remove the # to add more.
+GREETINGS = (
+    "Oh, hello! I'm Reachy, the cutest robot on this desk. Well, the only robot on this desk. How are you doing?",
+    # "Beep boop! Hi, I'm Reachy! My antennas are tingling, so tell me, how are you doing today?",
+    # "Hello, human! I'm Reachy. I just woke up from a very long robot nap. How are you doing?",
+    # "Hi! I'm Reachy! I've been sitting on this desk all day waiting for someone to talk to. How are you doing?",
+)
 
 # If you end with one of these, you're still thinking, so Reachy waits instead of answering
 THINKING_PHRASES = ("let me think", "hold on", "give me a second", "give me a moment", "one second", "one sec", "just a second")

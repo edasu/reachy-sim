@@ -29,6 +29,15 @@ def asked_for_mood(text: str) -> str | None:
     return None
 
 
+def asked_for_move(text: str) -> str | None:
+    # "Reachy, can you turn around?" -> "spin" (see MOVE_COMMANDS in settings.py)
+    joined = " " + " ".join(words_of(text)) + " "
+    for phrase, gesture in settings.MOVE_COMMANDS.items():
+        if f" {phrase} " in joined:
+            return gesture
+    return None
+
+
 def turn_state(text: str) -> str:
     # "thinking"   = you asked for time ("Hmm.", "Let me think.")
     # "unfinished" = you stopped in the middle of a sentence ("...pizza and")

@@ -205,15 +205,19 @@ POSES = {...}       # Each mood's pose, speed and gesture
 
 To make a new gesture, add it to `GESTURES` in `reachy_chat/body.py` and use it with `body.gesture("name")`, or set it as a pose's `gesture`.
 
+You can also ask for moves out loud: **"turn around"** / **"spin"** (Reachy turns its body about 145° each way and comes back, with little hops), **"nod"** and **"shake your head"**. Reachy also spins when it gets excited. The phrases are `MOVE_COMMANDS` in `settings.py`. The head always turns along with the body.
+
 ## 5. Start the simulator
 
 Open a **separate terminal window** and keep it running:
 
 ```bash
-.venv/bin/mjpython -m reachy_mini.daemon.app.main --sim
+.venv/bin/mjpython sim.py
 ```
 
 On macOS, the 3D simulator window needs `mjpython` (MuJoCo's Python launcher) instead of plain `python`. A window with Reachy Mini should open.
+
+`sim.py` starts the normal simulator, but without Reachy's virtual camera and video streaming, which `chat.py` doesn't use. That makes it about 4× lighter on the CPU (≈80% instead of ≈350%), so the voice and brain run faster. The full simulator is still `.venv/bin/mjpython -m reachy_mini.daemon.app.main --sim`.
 
 > No window needed? `.venv/bin/reachy-mini-daemon --sim --headless` runs the simulator without graphics.
 

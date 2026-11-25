@@ -18,12 +18,17 @@ from .voice import Voice
 
 UPDATES_PER_SECOND = 50
 PARTS = ("x", "y", "z", "roll", "pitch", "yaw", "right", "left", "body_yaw")  # Everything Reachy can move
-LIMITS = dict(x=20, y=20, z=20, roll=30, pitch=30, yaw=35, right=1.2, left=1.2, body_yaw=0.6)  # Safety limits
+LIMITS = dict(x=20, y=20, z=20, roll=30, pitch=30, yaw=35, right=1.2, left=1.2, body_yaw=2.6)  # Safety limits (the body can turn about ±150°)
 
 
 def wave(t: float, seconds: float) -> float:
     # Smooth back-and-forth between -1 and 1, once every `seconds`
     return math.sin(2 * math.pi * t / seconds)
+
+
+def ease(u: float) -> float:
+    # 0 -> 1 that starts and ends gently (no sudden jerk)
+    return 0.5 - 0.5 * math.cos(math.pi * u)
 
 
 # Short one-off moves. Each takes u = progress from 0 to 1 and returns what to add to the pose.
@@ -35,6 +40,10 @@ GESTURES = {
                                    right=0.4 * wave(u, 0.25) * (1 - u), left=-0.4 * wave(u, 0.25) * (1 - u))),
     "tilt": (1.2, lambda u: dict(roll=14 * wave(u, 1) * (1 - u))),  # Curious tilt one way, then the other
     "shake": (0.8, lambda u: dict(yaw=15 * wave(u, 0.5) * (1 - u))),  # "No no"
+    # Turns the whole body around to the left, then to the right, then back, with happy hops and antennas
+    "spin": (5.0, lambda u: dict(body_yaw=2.5 * math.sin(2 * math.pi * ease(u)),
+                                 z=5 * abs(math.sin(8 * math.pi * u)) * (1 - u),
+                                 right=0.4 * wave(u, 0.1), left=-0.4 * wave(u, 0.1))),
 }
 
 
@@ -104,7 +113,10 @@ class Body:
             self.gesture(gesture)
 
     def gesture(self, name: str) -> None:
-        # Plays a short move from GESTURES on top of the current pose
+        # Plays a short move from GESTURES on top of the current pose.
+        # A gesture that is still playing (like a spin) is never cut off by a new one.
+        if self.gesture_name and time.perf_counter() - self.gesture_started < GESTURES[self.gesture_name][0]:
+            return
         self.gesture_name, self.gesture_started = name, time.perf_counter()
 
     # ---------- The animation loop ----------
@@ -153,7 +165,9 @@ class Body:
 
     def _send(self, p: dict) -> None:
         p = {part: max(-LIMITS[part], min(LIMITS[part], value)) for part, value in p.items()}  # Stay safe
-        head = create_head_pose(x=p["x"], y=p["y"], z=p["z"], roll=p["roll"], pitch=p["pitch"], yaw=p["yaw"],
+        # The head's yaw is measured from where the body points, so the head turns along with the body
+        head_yaw = p["yaw"] + math.degrees(p["body_yaw"])
+        head = create_head_pose(x=p["x"], y=p["y"], z=p["z"], roll=p["roll"], pitch=p["pitch"], yaw=head_yaw,
                                 mm=True, degrees=True)
         try:
             self.mini.set_target(head=head, antennas=[p["right"], p["left"]], body_yaw=p["body_yaw"])
