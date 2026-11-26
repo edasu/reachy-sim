@@ -18,7 +18,7 @@ VOICE_CACHE = Path(".voice_cache")  # Saved audio for fixed phrases, so they pla
 # ---------------------- Brain (Ollama) ----------------------
 
 OLLAMA_URL = "http://localhost:11434/api/chat"  # Ollama's local server
-MODEL = "llama3.2"  # Any model downloaded with `ollama pull <name>`
+MODEL = "llama3.2"  # Any model downloaded with `ollama pull <modelname>`, llama3.1:8b could give better answers but is slower on you CPU
 MAX_REPLY_SENTENCES = 3  # Reachy stops after this many sentences (2 = snappier, 4 = chattier)
 
 # Reachy's personality. Edit this to change how it talks.
