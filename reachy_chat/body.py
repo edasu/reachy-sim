@@ -41,7 +41,6 @@ GESTURES = {
                                    right=0.4 * wave(u, 0.25) * (1 - u), left=-0.4 * wave(u, 0.25) * (1 - u))),
     "tilt": (1.2, lambda u: dict(roll=14 * wave(u, 1) * (1 - u))),  # Curious tilt one way, then the other
     "shake": (0.8, lambda u: dict(yaw=15 * wave(u, 0.5) * (1 - u))),  # "No no"
-    # Turns the whole body around to the left, then to the right, then back, with happy hops and antennas
     # Answers that match Reachy's words (see WORD_GESTURES in settings.py)
     "happy_nod": (0.8, lambda u: dict(pitch=8 * abs(math.sin(2 * math.pi * u)),  # Nod with antennas up
                                       right=0.4 * math.sin(math.pi * u), left=-0.4 * math.sin(math.pi * u))),
@@ -57,6 +56,7 @@ GESTURES = {
     "greet": (3.5, lambda u: dict(body_yaw=0.9 * math.sin(math.pi * ease(u)), pitch=-6 * math.sin(math.pi * u),
                                   right=0.5 * wave(u, 0.15) * math.sin(math.pi * u),
                                   left=-0.5 * wave(u, 0.15) * math.sin(math.pi * u))),
+    # Turns the whole body around to the left, then to the right, then back, with happy hops and antennas
     "spin": (5.0, lambda u: dict(body_yaw=2.5 * math.sin(2 * math.pi * ease(u)),
                                  z=5 * abs(math.sin(8 * math.pi * u)) * (1 - u),
                                  right=0.4 * wave(u, 0.1), left=-0.4 * wave(u, 0.1))),
